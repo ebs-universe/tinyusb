@@ -176,7 +176,8 @@ TU_ATTR_ALWAYS_INLINE static inline bool tu_is_aligned32(uint32_t value) { retur
 TU_ATTR_ALWAYS_INLINE static inline bool tu_is_aligned64(uint64_t value) { return (value & 0x3FUL) == 0; }
 
 //------------- Mathematics -------------//
-TU_ATTR_ALWAYS_INLINE static inline uint32_t tu_div_ceil(uint32_t v, uint32_t d) { return (v + d -1)/d; }
+TU_ATTR_ALWAYS_INLINE static inline uint32_t tu_div_ceil(uint32_t v, uint32_t d) { return TU_DIV_CEIL(v, d); }
+TU_ATTR_ALWAYS_INLINE static inline uint32_t tu_round_up(uint32_t v, uint32_t f) { return tu_div_ceil(v, f) * f; }
 
 // log2 of a value is its MSB's position
 // TODO use clz TODO remove

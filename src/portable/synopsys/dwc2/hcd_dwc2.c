@@ -28,6 +28,10 @@
 
 #if CFG_TUH_ENABLED && defined(TUP_USBIP_DWC2)
 
+#if !(CFG_TUH_DWC2_SLAVE_ENABLE || CFG_TUH_DWC2_DMA_ENABLE)
+#error DWC2 require either CFG_TUH_DWC2_SLAVE_ENABLE or CFG_TUH_DWC2_DMA_ENABLE to be enabled
+#endif
+
 // Debug level for DWC2
 #define DWC2_DEBUG    2
 
@@ -131,6 +135,23 @@ TU_ATTR_ALWAYS_INLINE static inline bool dma_host_enabled(const dwc2_regs_t* dwc
   // Internal DMA only
   return CFG_TUH_DWC2_DMA_ENABLE && dwc2->ghwcfg2_bm.arch == GHWCFG2_ARCH_INTERNAL_DMA;
 }
+
+#if CFG_TUH_MEM_DCACHE_ENABLE
+bool hcd_dcache_clean(const void* addr, uint32_t data_size) {
+  TU_VERIFY(addr && data_size);
+  return dwc2_dcache_clean(addr, data_size);
+}
+
+bool hcd_dcache_invalidate(const void* addr, uint32_t data_size) {
+  TU_VERIFY(addr && data_size);
+  return dwc2_dcache_invalidate(addr, data_size);
+}
+
+bool hcd_dcache_clean_invalidate(const void* addr, uint32_t data_size) {
+  TU_VERIFY(addr && data_size);
+  return dwc2_dcache_clean_invalidate(addr, data_size);
+}
+#endif
 
 // Allocate a channel for new transfer
 TU_ATTR_ALWAYS_INLINE static inline uint8_t channel_alloc(dwc2_regs_t* dwc2) {
@@ -336,14 +357,8 @@ bool hcd_init(uint8_t rhport, const tusb_rhport_init_t* rh_init) {
 
   // Core Initialization
   const bool is_highspeed = dwc2_core_is_highspeed(dwc2, TUSB_ROLE_HOST);
-  TU_ASSERT(dwc2_core_init(rhport, is_highspeed));
-
-  if (dma_host_enabled(dwc2)) {
-    // DMA seems to be only settable after a core reset, and not possible to switch on-the-fly
-    dwc2->gahbcfg |= GAHBCFG_DMAEN | GAHBCFG_HBSTLEN_2;
-  } else {
-    dwc2->gintmsk |= GINTSTS_RXFLVL;
-  }
+  const bool is_dma = dma_host_enabled(dwc2);
+  TU_ASSERT(dwc2_core_init(rhport, is_highspeed, is_dma));
 
   //------------- 3.1 Host Initialization -------------//
 
@@ -561,6 +576,7 @@ static bool channel_xfer_start(dwc2_regs_t* dwc2, uint8_t ch_id) {
     if (hcchar_bm->ep_dir == TUSB_DIR_IN) {
       channel_send_in_token(dwc2, channel);
     } else {
+      hcd_dcache_clean(edpt->buffer, edpt->buflen);
       channel->hcchar |= HCCHAR_CHENA;
     }
   } else {
@@ -1122,16 +1138,20 @@ static void handle_channel_irq(uint8_t rhport, bool in_isr) {
       TU_ASSERT(xfer->ep_id < CFG_TUH_DWC2_ENDPOINT_MAX,);
       dwc2_channel_char_t hcchar_bm = channel->hcchar_bm;
 
-      uint32_t hcint = channel->hcint;
-      channel->hcint = hcint;
+      const uint32_t hcint = channel->hcint;
+      channel->hcint = hcint; // clear interrupt
 
-      bool is_done;
+      bool is_done = false;
       if (is_dma) {
         #if CFG_TUH_DWC2_DMA_ENABLE
         if (hcchar_bm.ep_dir == TUSB_DIR_OUT) {
           is_done = handle_channel_out_dma(dwc2, ch_id, hcint);
         } else {
           is_done = handle_channel_in_dma(dwc2, ch_id, hcint);
+          if (is_done && (channel->hcdma > xfer->xferred_bytes)) {
+            // hcdma is increased by word --> need to align4
+            hcd_dcache_invalidate((void*) tu_align4(channel->hcdma - xfer->xferred_bytes), xfer->xferred_bytes);
+          }
         }
         #endif
       } else {
