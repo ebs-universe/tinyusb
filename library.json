@@ -19,5 +19,11 @@
     "license": "MIT",
     "homepage": "https://www.tinyusb.org/",
     "frameworks": "*",
-    "platforms": "*"
+    "platforms": "*",
+    "dependencies": [
+        { 
+            "owner": "chintal",
+            "name": "ebs-hal-uc"
+        }
+    ]
 }
